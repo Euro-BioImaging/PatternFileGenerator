@@ -141,6 +141,7 @@ def proofread_group_patterns(filelist):
 def save_pattern_file(rootDir, filelist, concatenation_axes = 'auto'):
     assert isinstance(concatenation_axes, type('')), 'concatenation_axes must be in type str.'
     assert isinstance(rootDir, type('')), 'rootDir must be in type str.'
+    filelist.sort()
     last = filelist[-1]
     zonelists = []
     zonelist_ids = []
@@ -156,20 +157,28 @@ def save_pattern_file(rootDir, filelist, concatenation_axes = 'auto'):
         zonelist_ids.append(zonelistidx)
         zonelists.append(zonelist)
     zonelistlen = len(zonelist)
+    flatlistdict = {}
     zonelistdict = {}
     zonelist_ids_dict = {}
     for i in range(zonelistlen):
+        flatlistdict[i] = []
         zonelistdict[i] = []
         zonelist_ids_dict[i] = []
     for zonelist, zonelistidx in zip(zonelists, zonelist_ids): ### TODO Change this to a (faster) transpose_dict function
         for i in range(zonelistlen):
             zonelistdict[i].append(zonelist[i])
             zonelist_ids_dict[i].append(zonelistidx[i])
+            flatlistdict[i].append(int(zonelist[i]))
     variable_zones = []
     patterns = []
     variable_zone_ids = []
     reg = last
     for i in range(zonelistlen):
+        uqs, count_dict = __find_uniques(flatlistdict[i])
+        if len(uqs) > 1:
+            increment = uqs[1] - uqs[0]
+        else:
+            increment = None
         dictitem = zonelistdict[i]
         dictitem.sort()
         minval = dictitem[0]
@@ -179,17 +188,25 @@ def save_pattern_file(rootDir, filelist, concatenation_axes = 'auto'):
             pass
         else:
             variable_zones.append((minval, maxval))
-            pattern = '<%s-%s>' % (minval, maxval)
+            if increment is None:
+                pattern = '<%s-%s>' % (minval, maxval)
+            else:
+                pattern = '<%s-%s:%s>' % (minval, maxval, increment)
             variable_zone_ids.append(zonelist_ids[-1])
             patterns.append(pattern)
 
     ### Make sure that the user inserted the fitting number of concatenation axes
     if concatenation_axes != 'auto':
+        if concatenation_axes == 'a':
+            concatenation_axes = concatenation_axes * len(patterns)
         assert len(concatenation_axes) == len(patterns), "The specified number of axes does not match the number of detected variable zones, which is %s." % len(patterns)
 
     ### Modify the pattern files to make sure the user-specified axes are inserted
         for i in range(len(patterns)):
-            patterns[i] = '%s' % concatenation_axes[i].capitalize() + patterns[i]
+            if concatenation_axes[i] == 'a':
+                pass
+            else:
+                patterns[i] = '%s' % concatenation_axes[i].capitalize() + patterns[i]
 
     ### Create the regex according to the detected variable zones
     oldreg = reg
@@ -207,6 +224,13 @@ def save_pattern_file(rootDir, filelist, concatenation_axes = 'auto'):
 
     if concatenation_axes == 'auto':
         newDir = rootDir
+    elif concatenation_axes == 'a' * len(patterns):
+        newfilelist = copy.deepcopy(filelist)
+        newDir = rootDir + '/tempdir'
+        for olditem, newitem in zip(filelist, newfilelist):
+            oldpath = os.path.join(rootDir, olditem)
+            newpath = os.path.join(newDir, newitem)
+            shutil.copy(oldpath, newpath)
     else:
         newfilelist = copy.deepcopy(filelist)
         for i, file in enumerate(newfilelist):
@@ -237,6 +261,19 @@ def save_pattern_file(rootDir, filelist, concatenation_axes = 'auto'):
             shutil.copy(oldpath, newpath)
     return reg, newDir
 
+def _create_pattern_filename(reg, idx):
+    assert '<' in reg
+    assert '>' in reg
+    string = reg.split('.')
+    if len(string) > 1:
+        string = ''.join(string[:-1])
+    else:
+        string = ''.join(string)
+    string = string.replace('<', 'Range{')
+    string = string.replace('>', '}')
+    string = string.replace(':', '-')
+    return string
+
 def save_pattern_file_per_group(rootDir, concatenation_axes = ['auto'], select_by = ''):
     assert isinstance(rootDir, type('')), 'rootDir must be in type str.'
     assert isinstance(select_by, type('')), 'select_by must be in type str.'
@@ -247,7 +284,13 @@ def save_pattern_file_per_group(rootDir, concatenation_axes = ['auto'], select_b
 
     gr_num = len(proofread.keys())
     if (len(concatenation_axes) == 1) & (concatenation_axes[0] == 'auto'):
-            axes_set = concatenation_axes * gr_num
+        axes_set = concatenation_axes * gr_num
+    elif (len(concatenation_axes) > 1):
+        axes_set = copy.deepcopy(concatenation_axes)
+        if any([item != 'auto' for item in concatenation_axes]):
+            for i in range(len(concatenation_axes)):
+                if concatenation_axes[i] == 'auto':
+                    axes_set[i] = 'a'
     else:
         axes_set = concatenation_axes
 
@@ -256,7 +299,15 @@ def save_pattern_file_per_group(rootDir, concatenation_axes = ['auto'], select_b
     for i, (idx, gr) in enumerate(proofread.items()):
         axes = axes_set[i]
         reg, newDir = save_pattern_file(rootDir, gr, axes)
-        with open(newDir + '/gr%s.pattern' % idx, 'w') as writer:
+        baseName = _create_pattern_filename(reg, idx)
+        name = '/' + baseName + '.pattern'
+        with open(newDir + name, 'w') as writer:
             writer.write(reg)
         regs.append(reg)
     return regs
+
+
+
+
+
+
